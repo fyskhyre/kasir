@@ -13,7 +13,7 @@ export default defineConfig({
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
       manifest: {
         name: 'Nama Webapp Anda',
-        short_name: 'Kasir App',
+        short_name: 'KTB Kasir',
         description: 'Deskripsi webapp Anda',
         theme_color: '#ffffff',
         background_color: '#ffffff',
