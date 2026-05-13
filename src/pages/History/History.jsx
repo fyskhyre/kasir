@@ -9,7 +9,7 @@ import 'react-date-range/dist/theme/default.css';
 
 // IMPORT HOOK GLOBAL
 import { useAlert } from '../../context/AlertContext'; 
-import { usePrinter } from '../../context/PrinterContext'; // Tambahan Printer Context
+import { usePrinter } from '../../context/PrinterContext'; 
 
 export default function History() {
   // INISIALISASI HOOK GLOBAL
@@ -150,11 +150,14 @@ export default function History() {
     return date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
   };
 
+  // =================================================================
+  // LOGIKA CETAK ULANG STRUK THERMAL
+  // =================================================================
   const cetakUlangStruk = async () => {
-    // MENGGUNAKAN GLOBAL ALERT
     if (!printCharacteristic) {
       return showAlert("Printer belum terhubung! Silakan klik ikon printer di kanan atas.", 'warning');
     }
+    
     if (!selectedTrx || detailItems.length === 0) {
       return showAlert("Data transaksi belum siap dicetak.", 'warning');
     }
@@ -163,25 +166,35 @@ export default function History() {
       if (typeof EscPosEncoder === 'undefined') {
          return showAlert("Cetak sukses! (Mode Simulasi)", 'success');
       }
+
       const encoder = new EscPosEncoder();
       let result = encoder.initialize();
       
-      // Logo
       try {
         const img = new Image();
-        img.src = 'kotabaru_logo.png';
+        img.src = 'header_struk.png';
         const loadedImg = await new Promise((resolve, reject) => {
           img.onload = () => resolve(img);
           img.onerror = () => reject(new Error('Logo tidak ditemukan'));
         });
-        result = result.align('center').image(loadedImg, 128, 128, 'atkinson').newline();
-      } catch (err) { console.warn("Skip logo cetak:", err.message); }
+        
+        result = result
+          .align('center')
+          .image(loadedImg, 384, 128, 'atkinson') // Dimensi disesuaikan menjadi rasio 3:1
+          .newline();
+      } catch (err) { 
+        console.warn("Skip logo cetak:", err.message); 
+      }
 
-      // Content Struk
       result = result
-        .align('center').bold(true).line(storeInfo?.nama_toko?.toUpperCase() || 'TOKO SAYA').bold(false).line(storeInfo?.alamat || '')
-        .line('--------------------------------').align('center').line('*** CETAK ULANG ***').line('--------------------------------')
-        .align('left').line(`Resi  : ${selectedTrx.no_invoice}`).line(`Tgl   : ${formatTanggal(selectedTrx.tanggal)}`).line(`Metode: ${selectedTrx.metode_pembayaran}`)
+        .line('--------------------------------')
+        .align('center')
+        .line('*** CETAK ULANG ***')
+        .line('--------------------------------')
+        .align('left')
+        .line(`Resi  : ${selectedTrx.no_invoice}`)
+        .line(`Tgl   : ${formatTanggal(selectedTrx.tanggal)}`)
+        .line(`Metode: ${selectedTrx.metode_pembayaran}`)
         .line('--------------------------------');
 
       detailItems.forEach(item => {
@@ -192,17 +205,33 @@ export default function History() {
       });
 
       const strTotal = `Rp ${selectedTrx.total_belanja.toLocaleString('id-ID')}`;
-      result = result.line('--------------------------------').bold(true).line('TOTAL:'.padEnd(32 - strTotal.length) + strTotal).bold(false)
-        .line('--------------------------------').align('center').line(storeInfo?.pesan_footer || 'Terima Kasih').newline().newline().newline().newline();
+      
+      result = result
+        .line('--------------------------------')
+        .bold(true)
+        .line('TOTAL:'.padEnd(32 - strTotal.length) + strTotal)
+        .bold(false)
+        .line('--------------------------------')
+        .align('center')
+        .line('~ Terimakasih banyak atas pesanannya ~') // Footer statis
+        .newline()
+        .newline()
+        .newline()
+        .newline();
 
       const uint8array = result.encode();
       const CHUNK_SIZE = 100;
+      
       for (let i = 0; i < uint8array.length; i += CHUNK_SIZE) {
         const chunk = uint8array.slice(i, i + CHUNK_SIZE);
-        if (printCharacteristic.properties.writeWithoutResponse) await printCharacteristic.writeValueWithoutResponse(chunk);
-        else await printCharacteristic.writeValue(chunk);
-        await new Promise(resolve => setTimeout(resolve, 20)); // Delay aman Bluetooth
+        if (printCharacteristic.properties.writeWithoutResponse) {
+          await printCharacteristic.writeValueWithoutResponse(chunk);
+        } else {
+          await printCharacteristic.writeValue(chunk);
+        }
+        await new Promise(resolve => setTimeout(resolve, 20));
       }
+      
     } catch (error) { 
       showAlert("Terjadi kesalahan saat mencetak: " + error.message, 'warning'); 
     }
@@ -220,7 +249,7 @@ export default function History() {
         <button 
           onClick={connectPrinter} 
           className={`relative p-2.5 sm:p-3 rounded-xl border shadow-sm transition-all flex items-center gap-2 ${
-            printerDevice ? 'bg-green-50 border-green-500 text-green-600' : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+            printerDevice ? 'bg-blue-50 border-blue-500 text-blue-600' : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
           }`}
         >
           <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -229,7 +258,7 @@ export default function History() {
           <span className="hidden sm:inline font-semibold text-sm">
             {printerDevice ? 'Terhubung' : 'Printer'}
           </span>
-          <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 border-white ${printerDevice ? 'bg-green-500' : 'bg-red-400'}`}></span>
+          <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 border-white ${printerDevice ? 'bg-blue-500' : 'bg-red-400'}`}></span>
         </button>
       </div>
 
@@ -258,7 +287,7 @@ export default function History() {
 
             {showCalendar && (
               <div className="absolute top-12 left-0 mt-2 bg-white rounded-2xl shadow-2xl border border-gray-100 p-2 overflow-hidden z-50">
-                <div className="overflow-x-auto hide-scrollbar">
+                <div className="overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                   <DateRange
                     editableDateInputs={true}
                     onChange={item => setDateRange([item.selection])}
@@ -285,7 +314,7 @@ export default function History() {
       </div>
 
       {/* DAFTAR TRANSAKSI */}
-      <div className="flex-1 overflow-y-auto space-y-3 sm:space-y-4 pb-20">
+      <div className="flex-1 overflow-y-auto space-y-3 sm:space-y-4 pb-20 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
         {loading ? (
           <div className="flex justify-center py-10">
             <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
@@ -306,7 +335,7 @@ export default function History() {
                 <p className="text-[10px] sm:text-xs text-gray-500 mb-0.5 sm:mb-1">{formatTanggal(trx.tanggal)}</p>
                 <p className="font-bold text-sm sm:text-base text-gray-800">{trx.no_invoice}</p>
                 <div className="flex items-center mt-1 space-x-2">
-                  <span className={`text-[10px] sm:text-xs px-2 py-0.5 rounded font-semibold ${trx.metode_pembayaran === 'Tunai' || trx.metode_pembayaran === 'Cash' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
+                  <span className={`text-[10px] sm:text-xs px-2 py-0.5 rounded font-semibold bg-blue-100 text-blue-700`}>
                     {trx.metode_pembayaran}
                   </span>
                 </div>
@@ -338,7 +367,7 @@ export default function History() {
               </button>
             </div>
 
-            <div className="p-4 sm:p-5 flex-1 overflow-y-auto">
+            <div className="p-4 sm:p-5 flex-1 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
               <div className="flex justify-between items-center text-sm mb-4 border-b border-dashed border-gray-300 pb-3">
                 <span className="text-gray-500">Tanggal</span>
                 <span className="font-semibold text-gray-800">{formatTanggal(selectedTrx.tanggal)}</span>
@@ -383,11 +412,6 @@ export default function History() {
           </div>
         </div>
       )}
-
-      <style dangerouslySetInnerHTML={{__html: `
-        .hide-scrollbar::-webkit-scrollbar { display: none; }
-        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-      `}} />
     </div>
   );
 }
