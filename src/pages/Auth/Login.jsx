@@ -56,10 +56,18 @@ export default function Login() {
         
         {/* Header Visual */}
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-blue-600 text-white rounded-2xl flex items-center justify-center font-bold text-3xl shadow-lg mx-auto mb-4">
-            K
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Kasir Pintar</h1>
+          {/* PEMBARUAN: Mengganti kotak 'K' dengan IMG logo asli */}
+          <img 
+            src="/kotabaru_logo.png" 
+            alt="Logo Kotabaru" 
+            className="w-20 h-20 object-contain mx-auto mb-4 drop-shadow-md"
+            onError={(e) => {
+                // Fallback jika gambar gagal dimuat
+                e.target.onerror = null;
+                e.target.src = 'https://cdn-icons-png.flaticon.com/512/9131/9131529.png';
+            }}
+          />
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">KTB Kasir</h1>
           <p className="text-sm text-gray-500 mt-2 italic font-medium">Masuk untuk mengelola transaksi Anda</p>
         </div>
 
@@ -80,7 +88,7 @@ export default function Login() {
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="admin"
+              placeholder="username"
               required
               className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition bg-gray-50 focus:bg-white"
             />
@@ -124,7 +132,7 @@ export default function Login() {
         </form>
 
         <div className="mt-8 text-center text-xs text-gray-400">
-          <p>© 2024 Kasir Pintar. Seluruh hak cipta dilindungi.</p>
+          <p>© 2026 KTB Kasir. Seluruh hak cipta dilindungi.</p>
         </div>
       </div>
     </div>
