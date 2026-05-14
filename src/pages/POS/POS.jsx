@@ -12,6 +12,7 @@ export default function POS() {
   const { printerDevice, printCharacteristic, connectPrinter } = usePrinter();
 
   // === STATE DATA ===
+  const [currentUser, setCurrentUser] = useState(null); // <-- Tambahan State Kasir
   const [menuData, setMenuData] = useState([]);
   const [categories, setCategories] = useState([]);
   const [storeInfo, setStoreInfo] = useState(null);
@@ -20,7 +21,7 @@ export default function POS() {
   // === STATE TRANSAKSI & UI ===
   const [searchQuery, setSearchQuery] = useState('');
   const [keranjang, setKeranjang] = useState([]);
-  const [expandedCategories, setExpandedCategories] = useState([]); // Menyimpan ID kategori yang terbuka
+  const [expandedCategories, setExpandedCategories] = useState([]); 
   
   // === STATE MODAL & PROSES ===
   const [isModalSummaryOpen, setIsModalSummaryOpen] = useState(false);
@@ -37,6 +38,14 @@ export default function POS() {
   const fetchInitialData = async () => {
     try {
       setLoading(true);
+
+      // --- TAMBAHAN RBAC: Ambil Sesi Kasir ---
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      if (authError || !user) {
+        showAlert("Sesi kasir tidak valid. Harap login kembali.", "warning");
+        return;
+      }
+      setCurrentUser(user); // Simpan data kasir
       
       const { data: storeData } = await supabase
         .from('store_settings')
@@ -46,7 +55,7 @@ export default function POS() {
       
       setStoreInfo(storeData);
 
-      // Ambil kategori, sudah terurut
+      // Ambil kategori. Karena RLS aktif, ini OTOMATIS hanya menarik kategori milik kasir ini saja!
       const { data: catData } = await supabase
         .from('categories')
         .select('*')
@@ -54,12 +63,11 @@ export default function POS() {
       
       setCategories(catData || []);
       
-      // Buka semua kategori secara default saat pertama kali dimuat
       if (catData) {
         setExpandedCategories(catData.map(c => c.id));
       }
 
-      // Ambil produk, sudah terurut sesuai MenuManager
+      // Ambil produk. Ini juga OTOMATIS terisolasi berkat RLS.
       const { data: prodData } = await supabase
         .from('products')
         .select('*')
@@ -73,7 +81,6 @@ export default function POS() {
     }
   };
 
-  // Fungsi Toggle untuk Buka/Tutup Kategori
   const toggleCategory = (categoryId) => {
     setExpandedCategories(prev => 
       prev.includes(categoryId) 
@@ -97,7 +104,7 @@ export default function POS() {
   const kurangiKeranjang = (id) => {
     setKeranjang(prev => {
       const itemAda = prev.find(item => item.id === id);
-      if (!itemAda) return prev; // Perbaikan Bug: Mencegah crash jika item tidak ada
+      if (!itemAda) return prev; 
 
       if (itemAda.qty === 1) {
         return prev.filter(item => item.id !== id);
@@ -121,14 +128,11 @@ export default function POS() {
   const totalBelanja = keranjang.reduce((total, item) => total + item.harga * item.qty, 0);
   const totalItemKeranjang = keranjang.reduce((acc, item) => acc + item.qty, 0);
 
-  // Filter produk yang tidak memiliki kategori (Lainnya)
   const uncategorizedProducts = menuData.filter(
     p => !p.kategori_id || !categories.find(c => String(c.id) === String(p.kategori_id))
   );
 
-  // =================================================================
-  // LOGIKA CETAK STRUK THERMAL
-  // =================================================================
+  // === LOGIKA CETAK STRUK THERMAL ===
   const handleCetakStruk = async () => {
     if (!printCharacteristic) {
       return showAlert("Printer belum terhubung! Silakan klik ikon printer di kiri atas.", "warning");
@@ -151,7 +155,6 @@ export default function POS() {
           img.onerror = () => reject(new Error('Logo tidak ditemukan'));
         });
         
-        // Perbaikan Bug Printer: newline dihapus agar jarak ke garis tidak terlalu jauh
         result = result
          .align('center')
          .image(loadedImg, 384, 128, 'atkinson');
@@ -159,7 +162,6 @@ export default function POS() {
         console.warn("Skip logo cetak:", err.message); 
       }
 
-      // Perbaikan Bug Printer: align('left') ditaruh SEBELUM garis putus-putus
       result = result
         .align('left')
         .line('--------------------------------')
@@ -210,6 +212,11 @@ export default function POS() {
 
   // === LOGIKA DATABASE TRANSAKSI ===
   const prosesPembayaran = async () => {
+    // --- Proteksi Kasir ---
+    if (!currentUser) {
+       return showAlert("Error: Identitas kasir tidak valid. Harap muat ulang halaman.", "warning");
+    }
+
     try {
       setIsSaving(true);
       const noInvoice = `INV-${Date.now().toString().slice(-6)}`;
@@ -220,25 +227,29 @@ export default function POS() {
         minute: '2-digit' 
       });
 
+      // Insert Transaksi Induk (Dengan label pemilik/kasir)
       const { data: transData, error: transError } = await supabase
         .from('transactions')
         .insert([{
           no_invoice: noInvoice, 
           total_belanja: totalBelanja, 
           metode_pembayaran: metodePembayaran, 
-          tanggal: new Date().toISOString()
+          tanggal: new Date().toISOString(),
+          user_id: currentUser.id // <--- Label hak milik kasir disematkan!
         }])
         .select();
 
       if (transError) throw transError;
 
+      // Persiapkan Data Item Belanja (Dengan label pemilik/kasir)
       const detailItems = keranjang.map(item => ({
         transaksi_id: transData[0].id, 
         product_id: item.id, 
         nama_produk: item.nama, 
         harga_satuan: item.harga, 
         qty: item.qty, 
-        subtotal: item.harga * item.qty
+        subtotal: item.harga * item.qty,
+        user_id: currentUser.id // <--- Label hak milik item disematkan!
       }));
 
       const { error: itemError } = await supabase
@@ -255,7 +266,6 @@ export default function POS() {
         waktu: waktu 
       });
       
-      // Bersihkan keranjang dan filter setelah sukses
       setKeranjang([]);
       setSearchQuery('');
       setIsModalPembayaranOpen(false);
@@ -273,7 +283,6 @@ export default function POS() {
     setMetodePembayaran('Tunai');
   };
 
-  // Helper untuk merender single menu item
   const renderMenuItem = (menu) => {
     const qty = keranjang.find(item => item.id === menu.id)?.qty || 0;
     return (
@@ -288,7 +297,6 @@ export default function POS() {
               alt={menu.nama} 
               className="w-full h-full object-cover" 
               onError={(e) => {
-                // Perbaikan Bug: Fallback jika gambar rusak/dihapus di storage
                 e.target.onerror = null; 
                 e.target.outerHTML = `<svg class="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>`;
               }}
@@ -344,7 +352,6 @@ export default function POS() {
     <div className="bg-gray-50 min-h-screen text-gray-800 font-sans pb-[140px] relative">
       <main className="max-w-3xl mx-auto px-4 mt-4">
         
-        {/* HEADER: PRINTER PAIRING & SEARCH BAR */}
         <div className="flex gap-3 mb-6 sticky top-2 z-20">
           <button 
             onClick={connectPrinter} 
@@ -379,7 +386,6 @@ export default function POS() {
           </div>
         </div>
 
-        {/* LIST MENU ITEM (ACCORDION BERDASARKAN KATEGORI) */}
         {loading ? (
           <div className="flex justify-center py-10">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -391,21 +397,17 @@ export default function POS() {
         ) : (
           <div className="space-y-6">
             {categories.map(cat => {
-              // Filter produk berdasarkan kategori dan pencarian
               const catProducts = menuData.filter(m => 
                 String(m.kategori_id) === String(cat.id) && 
                 m.nama.toLowerCase().includes(searchQuery.toLowerCase())
               );
 
-              // Jika kosong karena filter pencarian, sembunyikan kategorinya
               if (catProducts.length === 0) return null;
 
-              // Otomatis buka kategori jika user sedang mengetik pencarian
               const isExpanded = searchQuery !== '' || expandedCategories.includes(cat.id);
 
               return (
                 <div key={cat.id} className="bg-white/50 rounded-2xl p-2 sm:p-3 border border-gray-100">
-                  {/* Header Accordion */}
                   <button 
                     onClick={() => toggleCategory(cat.id)}
                     className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-gray-100/50 transition-colors"
@@ -421,7 +423,6 @@ export default function POS() {
                     </div>
                   </button>
 
-                  {/* Body Accordion (Daftar Menu Terurut) */}
                   {isExpanded && (
                     <div className="flex flex-col gap-3 mt-3">
                       {catProducts.map(menu => renderMenuItem(menu))}
@@ -431,7 +432,6 @@ export default function POS() {
               );
             })}
 
-            {/* Kategori Lainnya (Untuk produk yang kehilangan relasi kategorinya) */}
             {uncategorizedProducts.filter(m => m.nama.toLowerCase().includes(searchQuery.toLowerCase())).length > 0 && (
               <div className="bg-white/50 rounded-2xl p-2 sm:p-3 border border-gray-100">
                 <button 
@@ -459,7 +459,6 @@ export default function POS() {
         )}
       </main>
 
-      {/* FLOATING CART BAR */}
       <div 
         className={`fixed inset-x-0 bottom-[80px] flex justify-center z-40 transition-all duration-300 ${
           totalItemKeranjang > 0 ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10 pointer-events-none'
@@ -485,7 +484,6 @@ export default function POS() {
         </div>
       </div>
 
-      {/* FASE 1: MODAL SUMMARY (ORDER REVIEW) */}
       {isModalSummaryOpen && (
         <div 
           className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[90] flex justify-center items-end sm:items-center p-0 sm:p-4"
@@ -564,7 +562,6 @@ export default function POS() {
         </div>
       )}
 
-      {/* FASE 2: MODAL PEMBAYARAN */}
       {isModalPembayaranOpen && (
         <div 
           className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex justify-center items-end sm:items-center p-4" 
@@ -584,7 +581,6 @@ export default function POS() {
                 </button>
             </div>
             
-            {/* Perbaikan: Layout diubah menjadi 3 kolom (grid-cols-3) */}
             <div className="grid grid-cols-3 gap-3 mb-6">
                 {['Tunai', 'QRIS', 'Transfer Bank'].map((m) => (
                   <button 
@@ -600,7 +596,6 @@ export default function POS() {
                        </div>
                      )}
 
-                     {/* Penulisan gambar secara eksplisit agar mudah Anda temukan dan edit */}
                      {m === 'Tunai' && (
                        <img src="/cash.png" alt="Tunai" className="h-8 w-auto object-contain drop-shadow-sm mt-1" onError={(e) => { e.target.onerror = null; e.target.src = "https://cdn-icons-png.flaticon.com/512/2489/2489756.png" }} />
                      )}
@@ -633,7 +628,6 @@ export default function POS() {
         </div>
       )}
 
-      {/* MODAL SUKSES & DETAIL STRUK */}
       {isModalSuksesOpen && transaksiTerakhir && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex justify-center items-end sm:items-center p-4">
           <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl text-center flex flex-col">
