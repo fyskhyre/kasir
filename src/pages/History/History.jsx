@@ -70,6 +70,15 @@ export default function History() {
   const fetchRiwayat = async () => {
     try {
       setLoading(true);
+
+      // --- TAMBAHAN RBAC: Pengecekan Sesi Kasir ---
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      if (authError || !user) {
+        showAlert("Sesi tidak valid. Harap login kembali.", "warning");
+        setLoading(false);
+        return;
+      }
+
       let query = supabase.from('transactions').select('*').order('tanggal', { ascending: false });
 
       const now = new Date();
@@ -178,20 +187,22 @@ export default function History() {
           img.onerror = () => reject(new Error('Logo tidak ditemukan'));
         });
         
+        // Perbaikan Bug Printer: Hapus newline setelah logo
         result = result
           .align('center')
-          .image(loadedImg, 384, 128, 'atkinson') // Dimensi disesuaikan menjadi rasio 3:1
-          .newline();
+          .image(loadedImg, 384, 128, 'atkinson');
       } catch (err) { 
         console.warn("Skip logo cetak:", err.message); 
       }
 
+      // Perbaikan Bug Printer: Susunan align yang benar agar garis putus-putus tidak bergeser
       result = result
+        .align('left')
         .line('--------------------------------')
         .align('center')
         .line('*** CETAK ULANG ***')
-        .line('--------------------------------')
         .align('left')
+        .line('--------------------------------')
         .line(`Resi  : ${selectedTrx.no_invoice}`)
         .line(`Tgl   : ${formatTanggal(selectedTrx.tanggal)}`)
         .line(`Metode: ${selectedTrx.metode_pembayaran}`)
