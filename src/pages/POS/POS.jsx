@@ -151,17 +151,18 @@ export default function POS() {
           img.onerror = () => reject(new Error('Logo tidak ditemukan'));
         });
         
+        // Perbaikan Bug Printer: newline dihapus agar jarak ke garis tidak terlalu jauh
         result = result
          .align('center')
-         .image(loadedImg, 384, 128, 'atkinson')
-         .newline();
+         .image(loadedImg, 384, 128, 'atkinson');
       } catch (err) {
         console.warn("Skip logo cetak:", err.message); 
       }
 
+      // Perbaikan Bug Printer: align('left') ditaruh SEBELUM garis putus-putus
       result = result
-        .line('--------------------------------')
         .align('left')
+        .line('--------------------------------')
         .line(`Resi  : ${transaksiTerakhir.no_invoice}`)
         .line(`Tgl   : ${transaksiTerakhir.waktu}`)
         .line(`Metode: ${transaksiTerakhir.metode}`)
@@ -321,7 +322,7 @@ export default function POS() {
               <span className="font-bold w-4 text-center">{qty}</span>
               <button 
                 onClick={() => tambahKeKeranjang(menu)} 
-                className="w-8 h-8 flex items-center justify-center bg-blue-500 text-white rounded-md shadow-sm active:scale-95 transition"
+                className="w-8 h-8 flex items-center justify-center bg-blue-50 text-blue-600 rounded-md shadow-sm active:scale-95 transition"
               >
                 <span className="text-lg leading-none mb-0.5">+</span>
               </button>
@@ -583,30 +584,34 @@ export default function POS() {
                 </button>
             </div>
             
-            <div className="grid grid-cols-2 gap-3 mb-6">
-                {['Tunai', 'QRIS'].map((m) => (
+            {/* Perbaikan: Layout diubah menjadi 3 kolom (grid-cols-3) */}
+            <div className="grid grid-cols-3 gap-3 mb-6">
+                {['Tunai', 'QRIS', 'Transfer Bank'].map((m) => (
                   <button 
                     key={m} 
                     onClick={() => setMetodePembayaran(m)} 
-                    className={`relative p-4 rounded-2xl border-2 flex flex-col items-center gap-3 transition-all ${
+                    className={`relative p-2 sm:p-3 rounded-2xl border-2 flex flex-col items-center gap-2 transition-all ${
                       metodePembayaran === m ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white hover:bg-gray-50'
                     }`}
                   >
                      {metodePembayaran === m && (
-                       <div className="absolute top-2 right-2 text-blue-500">
-                         <svg className="w-5 h-5 bg-white rounded-full" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
+                       <div className="absolute top-1 right-1 text-blue-500">
+                         <svg className="w-4 h-4 bg-white rounded-full" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
                        </div>
                      )}
-                     <img 
-                       src={`/${m.toLowerCase()}.png`} 
-                       alt={m} 
-                       className="h-10 w-auto object-contain drop-shadow-sm" 
-                       onError={(e) => { 
-                         e.target.onerror = null; 
-                         e.target.src = "https://cdn-icons-png.flaticon.com/512/2489/2489756.png" 
-                       }} 
-                     />
-                     <span className={`font-bold text-sm ${
+
+                     {/* Penulisan gambar secara eksplisit agar mudah Anda temukan dan edit */}
+                     {m === 'Tunai' && (
+                       <img src="/cash.png" alt="Tunai" className="h-8 w-auto object-contain drop-shadow-sm mt-1" onError={(e) => { e.target.onerror = null; e.target.src = "https://cdn-icons-png.flaticon.com/512/2489/2489756.png" }} />
+                     )}
+                     {m === 'QRIS' && (
+                       <img src="/qris.png" alt="QRIS" className="h-8 w-auto object-contain drop-shadow-sm mt-1" onError={(e) => { e.target.onerror = null; e.target.src = "https://cdn-icons-png.flaticon.com/512/2489/2489756.png" }} />
+                     )}
+                     {m === 'Transfer Bank' && (
+                       <img src="/transfer_bank.png" alt="Transfer Bank" className="h-8 w-auto object-contain drop-shadow-sm mt-1" onError={(e) => { e.target.onerror = null; e.target.src = "https://cdn-icons-png.flaticon.com/512/2489/2489756.png" }} />
+                     )}
+
+                     <span className={`font-bold text-[11px] sm:text-xs text-center leading-tight ${
                        metodePembayaran === m ? 'text-blue-700' : 'text-gray-600'
                      }`}>
                        {m}
