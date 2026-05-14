@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../../config/supabaseClient';
 
 export default function Expense() {
+  const [currentUser, setCurrentUser] = useState(null); // <--- TAMBAHAN: State Sesi Kasir
   const [keterangan, setKeterangan] = useState('');
   const [nominal, setNominal] = useState('');
   const [riwayatPengeluaran, setRiwayatPengeluaran] = useState([]);
@@ -16,7 +17,18 @@ export default function Expense() {
   const fetchRiwayat = async () => {
     try {
       setLoading(true);
+
+      // --- TAMBAHAN RBAC: Ambil Sesi Kasir di awal ---
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      if (authError || !user) {
+        alert('Sesi tidak valid. Harap login kembali.');
+        setLoading(false);
+        return;
+      }
+      setCurrentUser(user);
+
       // Mengambil 50 data pengeluaran terakhir dari Supabase
+      // Jika RLS sudah aktif, otomatis hanya menarik pengeluaran kasir ini saja
       const { data, error } = await supabase
         .from('expenses')
         .select('*')
@@ -35,16 +47,13 @@ export default function Expense() {
   const simpanUangKeluar = async (e) => {
     e.preventDefault();
     if (!keterangan || !nominal) return alert('Harap isi keterangan dan nominal!');
+    if (!currentUser) return alert('Sesi tidak valid, harap muat ulang halaman.'); // <--- Proteksi RBAC
     
     try {
       setSubmitting(true);
-      
-      // Ambil user ID yang sedang login
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
-      if (authError || !user) throw new Error('Sesi tidak valid, harap login ulang.');
 
       const pengeluaranBaru = {
-        user_id: user.id,
+        user_id: currentUser.id, // <--- Menyematkan ID Kasir
         keterangan: keterangan,
         nominal: parseInt(nominal)
       };
