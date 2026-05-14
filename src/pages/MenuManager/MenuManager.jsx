@@ -3,12 +3,13 @@ import { supabase } from '../../config/supabaseClient';
 
 export default function MenuManager() {
   // === STATE DATABASE (CRUD) ===
+  const [currentUser, setCurrentUser] = useState(null); // <--- STATE BARU UNTUK SESI KASIR
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // === STATE DRAG AND DROP & MODE EDIT ===
-  const [isReorderMode, setIsReorderMode] = useState(false); // <--- STATE BARU UNTUK MODE ATUR POSISI
+  const [isReorderMode, setIsReorderMode] = useState(false);
   const [draggedProduct, setDraggedProduct] = useState(null);
   const [dragOverProduct, setDragOverProduct] = useState(null);
 
@@ -30,6 +31,17 @@ export default function MenuManager() {
   const fetchData = async () => {
     try {
       setLoading(true);
+
+      // --- TAMBAHAN RBAC: Ambil Sesi Kasir ---
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      if (authError || !user) {
+        alert("Sesi tidak valid. Harap login kembali.");
+        setLoading(false);
+        return;
+      }
+      setCurrentUser(user);
+
+      // Karena RLS aktif, query ini otomatis hanya mengambil data milik kasir bersangkutan
       const { data: catData, error: catError } = await supabase.from('categories').select('*').order('urutan', { ascending: true });
       if (catError) throw catError;
       setCategories(catData || []);
@@ -167,6 +179,8 @@ export default function MenuManager() {
 
   const handleSimpanMenu = async (e) => {
     e.preventDefault();
+    if (!currentUser) return alert("Sesi tidak valid!"); // <--- Proteksi RBAC
+
     try {
       setIsSubmitting(true);
       let finalImageUrl = formData.image_url;
@@ -189,7 +203,8 @@ export default function MenuManager() {
         nama: formData.nama, 
         harga: parseInt(formData.harga), 
         kategori_id: formData.kategori_id ? formData.kategori_id : null,
-        image_url: finalImageUrl
+        image_url: finalImageUrl,
+        user_id: currentUser.id // <--- Label hak milik kasir disematkan!
       };
 
       if (formData.id) {
@@ -214,9 +229,15 @@ export default function MenuManager() {
   const handleSimpanKategori = async (e) => {
     e.preventDefault();
     if (!newCategoryName.trim()) return alert('Nama kategori tidak boleh kosong!');
+    if (!currentUser) return alert("Sesi tidak valid!"); // <--- Proteksi RBAC
+
     try {
       setIsSubmittingCategory(true);
-      const { error } = await supabase.from('categories').insert([{ nama: newCategoryName.trim(), urutan: categories.length }]);
+      const { error } = await supabase.from('categories').insert([{ 
+        nama: newCategoryName.trim(), 
+        urutan: categories.length,
+        user_id: currentUser.id // <--- Label hak milik kasir disematkan!
+      }]);
       if (error) throw error;
       setIsCategoryModalOpen(false);
       setNewCategoryName('');
