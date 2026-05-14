@@ -185,7 +185,7 @@ export default function POS() {
         .bold(false)
         .line('--------------------------------')
         .align('center')
-        .line('~ Terimakasih banyak atas pesanannya ~')
+        .line('~ Terimakasih ~')
         .newline()
         .newline()
         .newline() 
