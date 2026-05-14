@@ -224,7 +224,7 @@ export default function History() {
         .bold(false)
         .line('--------------------------------')
         .align('center')
-        .line('~ Terimakasih banyak atas pesanannya ~') // Footer statis
+        .line('~ Terimakasih ~') // Footer statis
         .newline()
         .newline()
         .newline()
