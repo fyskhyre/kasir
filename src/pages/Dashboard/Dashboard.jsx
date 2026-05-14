@@ -16,6 +16,10 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   
+  // State untuk menyimpan daftar Kasir/Toko dan pilihan aktif
+  const [cashiers, setCashiers] = useState([]);
+  const [selectedCashier, setSelectedCashier] = useState('all');
+
   // State untuk menyimpan ringkasan data
   const [stats, setStats] = useState({
     pendapatanPeriode: 0,
@@ -50,20 +54,20 @@ export default function Dashboard() {
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []); // Hapus calendarRef dari dependency
+  }, []);
 
   // Cek Role Admin saat komponen dimuat
   useEffect(() => {
     checkAdminRole();
   }, []);
 
-  // Fetch data setiap kali filter atau appliedDateRange berubah
+  // Fetch data setiap kali filter kalender, toko, atau status admin berubah
   useEffect(() => {
     if (isAdmin) {
       fetchDashboardData();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter, appliedDateRange, isAdmin]);
+  }, [filter, appliedDateRange, isAdmin, selectedCashier]);
 
   const checkAdminRole = async () => {
     try {
@@ -72,7 +76,7 @@ export default function Dashboard() {
 
       const { data: profile } = await supabase
         .from('profiles')
-        .select('role')
+        .select('*')
         .eq('id', user.id)
         .single();
 
@@ -82,6 +86,18 @@ export default function Dashboard() {
         return;
       }
       setIsAdmin(true);
+
+      // --- AMBIL DAFTAR TOKO / KASIR ---
+      // Admin berhak mengambil daftar semua profil untuk ditampilkan di dropdown
+      const { data: profilesData } = await supabase
+        .from('profiles')
+        .select('*')
+        .neq('role', 'admin'); // Abaikan admin agar dropdown hanya berisi kasir/toko
+        
+      if (profilesData) {
+        setCashiers(profilesData);
+      }
+
     } catch (error) {
       setErrorMsg(error.message);
       setLoading(false);
@@ -152,21 +168,30 @@ export default function Dashboard() {
       const startISO = start.toISOString();
       const endISO = end.toISOString();
 
-      // 2. Ambil Transaksi & Pengeluaran
-      const { data: trxData, error: trxError } = await supabase
+      // 2. Siapkan Kueri Transaksi & Pengeluaran
+      let trxQuery = supabase
         .from('transactions')
         .select('*, transaction_items(*)')
         .gte('tanggal', startISO)
         .lte('tanggal', endISO);
 
-      if (trxError) throw trxError;
-
-      const { data: expData, error: expError } = await supabase
+      let expQuery = supabase
         .from('expenses')
         .select('*')
         .gte('tanggal', startISO)
         .lte('tanggal', endISO);
 
+      // --- FILTER SPESIFIK TOKO (Jika bukan "Semua Toko") ---
+      if (selectedCashier !== 'all') {
+        trxQuery = trxQuery.eq('user_id', selectedCashier);
+        expQuery = expQuery.eq('user_id', selectedCashier);
+      }
+
+      // Eksekusi Kueri
+      const { data: trxData, error: trxError } = await trxQuery;
+      if (trxError) throw trxError;
+
+      const { data: expData, error: expError } = await expQuery;
       if (expError) throw expError;
 
       // 3. Kalkulasi Ringkasan Kartu
@@ -287,6 +312,22 @@ export default function Dashboard() {
 
         {/* Posisi Filter di dorong ke kanan */}
         <div className="flex flex-col sm:flex-row justify-end items-end sm:items-center gap-2 relative w-full sm:w-auto">
+          
+          {/* --- DROPDOWN PILIH TOKO / KASIR --- */}
+          <select 
+            value={selectedCashier} 
+            onChange={(e) => setSelectedCashier(e.target.value)}
+            className="px-4 py-2.5 bg-white border border-gray-200 shadow-sm rounded-xl text-sm font-bold text-blue-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 min-w-[150px] w-full sm:w-auto"
+          >
+            <option value="all">🌐 Semua Toko</option>
+            {cashiers.map(c => (
+              <option key={c.id} value={c.id}>
+                {/* Gunakan c.nama_lengkap sesuai database Anda */}
+                🏪 {c.nama_lengkap || `Toko/Kasir (${c.id.substring(0,5)})`}
+              </option>
+            ))}
+          </select>
+
           <select 
             value={filter} 
             onChange={(e) => setFilter(e.target.value)}
