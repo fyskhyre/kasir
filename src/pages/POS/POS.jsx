@@ -12,17 +12,22 @@ export default function POS() {
   const { printerDevice, printCharacteristic, connectPrinter } = usePrinter();
 
   // === STATE DATA ===
-  const [currentUser, setCurrentUser] = useState(null); // <-- Tambahan State Kasir
+  const [currentUser, setCurrentUser] = useState(null); 
   const [menuData, setMenuData] = useState([]);
   const [categories, setCategories] = useState([]);
   const [storeInfo, setStoreInfo] = useState(null);
   const [loading, setLoading] = useState(true);
   
   // === STATE TRANSAKSI & UI ===
+  const [activeTab, setActiveTab] = useState('menu'); // <-- TAB STATE: 'menu' atau 'manual'
   const [searchQuery, setSearchQuery] = useState('');
   const [keranjang, setKeranjang] = useState([]);
   const [expandedCategories, setExpandedCategories] = useState([]); 
   
+  // === STATE INPUT MANUAL ===
+  const [manualPrice, setManualPrice] = useState('0');
+  const [manualNote, setManualNote] = useState('');
+
   // === STATE MODAL & PROSES ===
   const [isModalSummaryOpen, setIsModalSummaryOpen] = useState(false);
   const [isModalPembayaranOpen, setIsModalPembayaranOpen] = useState(false);
@@ -39,13 +44,12 @@ export default function POS() {
     try {
       setLoading(true);
 
-      // --- TAMBAHAN RBAC: Ambil Sesi Kasir ---
       const { data: { user }, error: authError } = await supabase.auth.getUser();
       if (authError || !user) {
         showAlert("Sesi kasir tidak valid. Harap login kembali.", "warning");
         return;
       }
-      setCurrentUser(user); // Simpan data kasir
+      setCurrentUser(user); 
       
       const { data: storeData } = await supabase
         .from('store_settings')
@@ -55,7 +59,6 @@ export default function POS() {
       
       setStoreInfo(storeData);
 
-      // Ambil kategori. Karena RLS aktif, ini OTOMATIS hanya menarik kategori milik kasir ini saja!
       const { data: catData } = await supabase
         .from('categories')
         .select('*')
@@ -67,7 +70,6 @@ export default function POS() {
         setExpandedCategories(catData.map(c => c.id));
       }
 
-      // Ambil produk. Ini juga OTOMATIS terisolasi berkat RLS.
       const { data: prodData } = await supabase
         .from('products')
         .select('*')
@@ -89,8 +91,14 @@ export default function POS() {
     );
   };
 
+  // === FUNGSI KERANJANG ===
   const tambahKeKeranjang = (menu) => {
     setKeranjang(prev => {
+      // Jika produk manual, selalu tambahkan sebagai item baru
+      if (menu.isManual) {
+        return [...prev, { ...menu }];
+      }
+
       const itemAda = prev.find(item => item.id === menu.id);
       if (itemAda) {
         return prev.map(item => 
@@ -131,6 +139,43 @@ export default function POS() {
   const uncategorizedProducts = menuData.filter(
     p => !p.kategori_id || !categories.find(c => String(c.id) === String(p.kategori_id))
   );
+
+  // === FUNGSI KALKULATOR INPUT MANUAL ===
+  const handleNum = (val) => {
+    setManualPrice(prev => {
+      if (prev === '0') return val;
+      if (prev.length > 9) return prev; // Batas maksimal input panjang
+      return prev + val;
+    });
+  };
+  
+  const handleDel = () => {
+    setManualPrice(prev => prev.length > 1 ? prev.slice(0, -1) : '0');
+  };
+
+  const handleC = () => {
+    setManualPrice('0');
+  };
+
+  const handleTambahManual = () => {
+    const price = parseInt(manualPrice || '0');
+    if (price <= 0) {
+      return showAlert("Harga tidak boleh nol", "warning");
+    }
+
+    const newItem = {
+      id: `manual-${Date.now()}`,
+      nama: manualNote.trim() || 'Item Manual',
+      harga: price,
+      qty: 1,
+      isManual: true,
+    };
+
+    tambahKeKeranjang(newItem);
+    setManualPrice('0');
+    setManualNote('');
+    showAlert("Item manual ditambahkan", "success");
+  };
 
   // === LOGIKA CETAK STRUK THERMAL ===
   const handleCetakStruk = async () => {
@@ -178,14 +223,21 @@ export default function POS() {
       });
 
       const strTotal = `Rp ${transaksiTerakhir.total.toLocaleString('id-ID')}`;
+      
+      // Buat teks footer secara manual
+      const teksFooter = "~ Terimakasih ~";
+      // Hitung jumlah spasi yang dibutuhkan untuk mendorong ke tengah
+      const spasiKiri = Math.floor((32 - teksFooter.length) / 2);
+      const teksTengah = " ".repeat(spasiKiri > 0 ? spasiKiri : 0) + teksFooter;
+
       result = result
         .line('--------------------------------')
         .bold(true)
         .line('TOTAL:'.padEnd(32 - strTotal.length) + strTotal)
         .bold(false)
         .line('--------------------------------')
-        .align('center')
-        .line('~ Terimakasih ~')
+        .align('left') // <--- KUNCI: Paksa tetap rata kiri!
+        .line(teksTengah) // <--- Cetak teks yang sudah didorong spasi
         .newline()
         .newline()
         .newline() 
@@ -212,7 +264,6 @@ export default function POS() {
 
   // === LOGIKA DATABASE TRANSAKSI ===
   const prosesPembayaran = async () => {
-    // --- Proteksi Kasir ---
     if (!currentUser) {
        return showAlert("Error: Identitas kasir tidak valid. Harap muat ulang halaman.", "warning");
     }
@@ -227,7 +278,6 @@ export default function POS() {
         minute: '2-digit' 
       });
 
-      // Insert Transaksi Induk (Dengan label pemilik/kasir)
       const { data: transData, error: transError } = await supabase
         .from('transactions')
         .insert([{
@@ -235,21 +285,20 @@ export default function POS() {
           total_belanja: totalBelanja, 
           metode_pembayaran: metodePembayaran, 
           tanggal: new Date().toISOString(),
-          user_id: currentUser.id // <--- Label hak milik kasir disematkan!
+          user_id: currentUser.id 
         }])
         .select();
 
       if (transError) throw transError;
 
-      // Persiapkan Data Item Belanja (Dengan label pemilik/kasir)
       const detailItems = keranjang.map(item => ({
         transaksi_id: transData[0].id, 
-        product_id: item.id, 
+        product_id: item.isManual ? null : item.id, 
         nama_produk: item.nama, 
         harga_satuan: item.harga, 
         qty: item.qty, 
         subtotal: item.harga * item.qty,
-        user_id: currentUser.id // <--- Label hak milik item disematkan!
+        user_id: currentUser.id 
       }));
 
       const { error: itemError } = await supabase
@@ -349,13 +398,14 @@ export default function POS() {
   };
 
   return (
-    <div className="bg-gray-50 min-h-screen text-gray-800 font-sans pb-[140px] relative">
+    <div className="bg-gray-50 min-h-screen text-gray-800 font-sans pb-[140px] relative animate-fade-in">
       <main className="max-w-3xl mx-auto px-4 mt-4">
         
-        <div className="flex gap-3 mb-6 sticky top-2 z-20">
+        {/* HEADER BAR: Ikon Printer & Tab Switcher */}
+        <div className="flex gap-3 mb-4 sticky top-2 z-20">
           <button 
             onClick={connectPrinter} 
-            className={`relative w-12 h-12 flex items-center justify-center rounded-xl border transition-all ${
+            className={`relative w-12 h-12 flex items-center justify-center rounded-xl border transition-all shrink-0 ${
               printerDevice ? 'bg-blue-50 border-blue-500 text-blue-600 shadow-sm' : 'bg-white border-gray-200 text-gray-400 shadow-sm'
             }`}
             title="Hubungkan Printer Thermal Bluetooth"
@@ -364,101 +414,175 @@ export default function POS() {
             <span className={`absolute top-2 right-2.5 w-2.5 h-2.5 rounded-full border-2 border-white ${printerDevice ? 'bg-blue-500' : 'bg-red-400'}`}></span>
           </button>
 
-          <div className="relative flex-1">
-            <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-            </span>
-            <input 
-              type="text" 
-              placeholder="Cari menu..." 
-              value={searchQuery} 
-              onChange={(e) => setSearchQuery(e.target.value)} 
-              className="w-full pl-10 pr-10 h-12 border border-gray-200 rounded-xl bg-white shadow-sm outline-none focus:ring-2 focus:ring-blue-500 transition" 
-            />
-            {searchQuery && (
-              <button 
-                onClick={() => setSearchQuery('')} 
-                className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-            )}
+          <div className="flex bg-gray-200 p-1 rounded-xl flex-1">
+            <button 
+              onClick={() => setActiveTab('menu')} 
+              className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all ${activeTab === 'menu' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              Menu
+            </button>
+            <button 
+              onClick={() => setActiveTab('manual')} 
+              className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all ${activeTab === 'manual' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              Input Manual
+            </button>
           </div>
         </div>
 
-        {loading ? (
-          <div className="flex justify-center py-10">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-          </div>
-        ) : menuData.length === 0 ? (
-          <div className="text-center py-12 bg-white rounded-2xl border border-gray-100 shadow-sm">
-            <p className="text-gray-500 text-sm font-medium">Belum ada menu terdaftar.</p>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {categories.map(cat => {
-              const catProducts = menuData.filter(m => 
-                String(m.kategori_id) === String(cat.id) && 
-                m.nama.toLowerCase().includes(searchQuery.toLowerCase())
-              );
-
-              if (catProducts.length === 0) return null;
-
-              const isExpanded = searchQuery !== '' || expandedCategories.includes(cat.id);
-
-              return (
-                <div key={cat.id} className="bg-white/50 rounded-2xl p-2 sm:p-3 border border-gray-100">
-                  <button 
-                    onClick={() => toggleCategory(cat.id)}
-                    className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-gray-100/50 transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      <h3 className="font-extrabold text-lg text-gray-800">{cat.nama}</h3>
-                      <span className="bg-gray-200 text-gray-600 text-xs font-bold px-2 py-0.5 rounded-full">
-                        {catProducts.length}
-                      </span>
-                    </div>
-                    <div className={`text-gray-400 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`}>
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
-                    </div>
-                  </button>
-
-                  {isExpanded && (
-                    <div className="flex flex-col gap-3 mt-3">
-                      {catProducts.map(menu => renderMenuItem(menu))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-
-            {uncategorizedProducts.filter(m => m.nama.toLowerCase().includes(searchQuery.toLowerCase())).length > 0 && (
-              <div className="bg-white/50 rounded-2xl p-2 sm:p-3 border border-gray-100">
+        {/* =========================================
+            TAB 1: DAFTAR MENU
+        ========================================= */}
+        {activeTab === 'menu' && (
+          <div className="animate-fade-in">
+            {/* Search Bar */}
+            <div className="relative mb-6">
+              <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+              </span>
+              <input 
+                type="text" 
+                placeholder="Cari menu..." 
+                value={searchQuery} 
+                onChange={(e) => setSearchQuery(e.target.value)} 
+                className="w-full pl-10 pr-10 h-12 border border-gray-200 rounded-xl bg-white shadow-sm outline-none focus:ring-2 focus:ring-blue-500 transition" 
+              />
+              {searchQuery && (
                 <button 
-                  onClick={() => toggleCategory('uncategorized')}
-                  className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-gray-100/50 transition-colors"
+                  onClick={() => setSearchQuery('')} 
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
                 >
-                  <div className="flex items-center gap-3">
-                    <h3 className="font-extrabold text-lg text-gray-800">Lainnya</h3>
-                  </div>
-                  <div className={`text-gray-400 transition-transform duration-300 ${expandedCategories.includes('uncategorized') || searchQuery !== '' ? 'rotate-180' : ''}`}>
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
-                  </div>
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
+              )}
+            </div>
 
-                {(expandedCategories.includes('uncategorized') || searchQuery !== '') && (
-                  <div className="flex flex-col gap-3 mt-3">
-                    {uncategorizedProducts
-                      .filter(m => m.nama.toLowerCase().includes(searchQuery.toLowerCase()))
-                      .map(menu => renderMenuItem(menu))}
+            {loading ? (
+              <div className="flex justify-center py-10">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+              </div>
+            ) : menuData.length === 0 ? (
+              <div className="text-center py-12 bg-white rounded-2xl border border-gray-100 shadow-sm">
+                <p className="text-gray-500 text-sm font-medium">Belum ada menu terdaftar.</p>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {categories.map(cat => {
+                  const catProducts = menuData.filter(m => 
+                    String(m.kategori_id) === String(cat.id) && 
+                    m.nama.toLowerCase().includes(searchQuery.toLowerCase())
+                  );
+
+                  if (catProducts.length === 0) return null;
+
+                  const isExpanded = searchQuery !== '' || expandedCategories.includes(cat.id);
+
+                  return (
+                    <div key={cat.id} className="bg-white/50 rounded-2xl p-2 sm:p-3 border border-gray-100">
+                      <button 
+                        onClick={() => toggleCategory(cat.id)}
+                        className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-gray-100/50 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <h3 className="font-extrabold text-lg text-gray-800">{cat.nama}</h3>
+                          <span className="bg-gray-200 text-gray-600 text-xs font-bold px-2 py-0.5 rounded-full">
+                            {catProducts.length}
+                          </span>
+                        </div>
+                        <div className={`text-gray-400 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`}>
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
+                        </div>
+                      </button>
+
+                      {isExpanded && (
+                        <div className="flex flex-col gap-3 mt-3">
+                          {catProducts.map(menu => renderMenuItem(menu))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {uncategorizedProducts.filter(m => m.nama.toLowerCase().includes(searchQuery.toLowerCase())).length > 0 && (
+                  <div className="bg-white/50 rounded-2xl p-2 sm:p-3 border border-gray-100">
+                    <button 
+                      onClick={() => toggleCategory('uncategorized')}
+                      className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-gray-100/50 transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        <h3 className="font-extrabold text-lg text-gray-800">Lainnya</h3>
+                      </div>
+                      <div className={`text-gray-400 transition-transform duration-300 ${expandedCategories.includes('uncategorized') || searchQuery !== '' ? 'rotate-180' : ''}`}>
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
+                      </div>
+                    </button>
+
+                    {(expandedCategories.includes('uncategorized') || searchQuery !== '') && (
+                      <div className="flex flex-col gap-3 mt-3">
+                        {uncategorizedProducts
+                          .filter(m => m.nama.toLowerCase().includes(searchQuery.toLowerCase()))
+                          .map(menu => renderMenuItem(menu))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
             )}
           </div>
         )}
+
+        {/* =========================================
+            TAB 2: INPUT MANUAL (KALKULATOR)
+        ========================================= */}
+        {activeTab === 'manual' && (
+          <div className="animate-fade-in bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+            <h3 className="font-bold text-gray-800 mb-4 text-center">Input Item Manual</h3>
+            
+            {/* Layar Harga */}
+            <div className="text-right text-4xl sm:text-5xl font-black text-gray-800 mb-4 bg-gray-50 p-4 rounded-xl border border-gray-200 overflow-hidden break-words">
+              Rp {parseInt(manualPrice || '0').toLocaleString('id-ID')}
+            </div>
+
+            {/* Input Catatan */}
+            <div className="mb-5">
+              <input 
+                type="text" 
+                placeholder="Catatan / Nama Item (Opsional)" 
+                value={manualNote} 
+                onChange={(e) => setManualNote(e.target.value)} 
+                className="w-full h-12 px-4 border border-gray-200 rounded-xl bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition text-sm" 
+              />
+            </div>
+
+            {/* Numpad Kalkulator */}
+            <div className="grid grid-cols-4 gap-2 sm:gap-3">
+              <button onClick={() => handleNum('1')} className="py-4 text-2xl font-bold bg-gray-50 rounded-xl hover:bg-gray-100 active:bg-gray-200 border border-gray-100 transition">1</button>
+              <button onClick={() => handleNum('2')} className="py-4 text-2xl font-bold bg-gray-50 rounded-xl hover:bg-gray-100 active:bg-gray-200 border border-gray-100 transition">2</button>
+              <button onClick={() => handleNum('3')} className="py-4 text-2xl font-bold bg-gray-50 rounded-xl hover:bg-gray-100 active:bg-gray-200 border border-gray-100 transition">3</button>
+              <button onClick={handleDel} className="py-4 text-xl font-bold bg-red-50 text-red-500 rounded-xl hover:bg-red-100 active:bg-red-200 transition">Del</button>
+
+              <button onClick={() => handleNum('4')} className="py-4 text-2xl font-bold bg-gray-50 rounded-xl hover:bg-gray-100 active:bg-gray-200 border border-gray-100 transition">4</button>
+              <button onClick={() => handleNum('5')} className="py-4 text-2xl font-bold bg-gray-50 rounded-xl hover:bg-gray-100 active:bg-gray-200 border border-gray-100 transition">5</button>
+              <button onClick={() => handleNum('6')} className="py-4 text-2xl font-bold bg-gray-50 rounded-xl hover:bg-gray-100 active:bg-gray-200 border border-gray-100 transition">6</button>
+              <button onClick={handleC} className="py-4 text-xl font-bold bg-red-100 text-red-600 rounded-xl hover:bg-red-200 active:bg-red-300 transition">C</button>
+
+              <button onClick={() => handleNum('7')} className="py-4 text-2xl font-bold bg-gray-50 rounded-xl hover:bg-gray-100 active:bg-gray-200 border border-gray-100 transition">7</button>
+              <button onClick={() => handleNum('8')} className="py-4 text-2xl font-bold bg-gray-50 rounded-xl hover:bg-gray-100 active:bg-gray-200 border border-gray-100 transition">8</button>
+              <button onClick={() => handleNum('9')} className="py-4 text-2xl font-bold bg-gray-50 rounded-xl hover:bg-gray-100 active:bg-gray-200 border border-gray-100 transition">9</button>
+              <button onClick={() => handleNum('000')} className="py-4 text-xl font-bold bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 active:bg-blue-200 transition">000</button>
+
+              <button onClick={() => handleNum('0')} className="py-4 text-2xl font-bold bg-gray-50 rounded-xl hover:bg-gray-100 active:bg-gray-200 border border-gray-100 transition">0</button>
+              <button onClick={() => handleNum('00')} className="py-4 text-xl font-bold bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 active:bg-blue-200 transition">00</button>
+              <button onClick={handleTambahManual} className="col-span-2 py-4 text-lg font-bold bg-blue-600 text-white rounded-xl shadow-md hover:bg-blue-700 active:scale-95 transition">
+                + Tambah
+              </button>
+            </div>
+          </div>
+        )}
+
       </main>
 
+      {/* FLOAT BUTTON KERANJANG */}
       <div 
         className={`fixed inset-x-0 bottom-[80px] flex justify-center z-40 transition-all duration-300 ${
           totalItemKeranjang > 0 ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10 pointer-events-none'
@@ -484,6 +608,7 @@ export default function POS() {
         </div>
       </div>
 
+      {/* === MODAL SUMMARY / KERANJANG === */}
       {isModalSummaryOpen && (
         <div 
           className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[90] flex justify-center items-end sm:items-center p-0 sm:p-4"
@@ -510,7 +635,10 @@ export default function POS() {
               {keranjang.map(item => (
                 <div key={item.id} className="flex items-center justify-between py-3 border-b border-gray-50 last:border-0">
                   <div className="flex-1 min-w-0 pr-4">
-                    <h4 className="font-bold text-gray-800 text-sm truncate">{item.nama}</h4>
+                    <h4 className="font-bold text-gray-800 text-sm truncate">
+                      {item.nama}
+                      {item.isManual && <span className="ml-2 text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded font-bold">Manual</span>}
+                    </h4>
                     <div className="text-blue-600 font-bold text-sm mt-0.5">
                       Rp {(item.harga * item.qty).toLocaleString('id-ID')}
                     </div>
@@ -562,6 +690,7 @@ export default function POS() {
         </div>
       )}
 
+      {/* === MODAL PILIH PEMBAYARAN === */}
       {isModalPembayaranOpen && (
         <div 
           className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex justify-center items-end sm:items-center p-4" 
@@ -628,6 +757,7 @@ export default function POS() {
         </div>
       )}
 
+      {/* === MODAL TRANSAKSI BERHASIL === */}
       {isModalSuksesOpen && transaksiTerakhir && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex justify-center items-end sm:items-center p-4">
           <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl text-center flex flex-col">
